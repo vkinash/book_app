@@ -12,9 +12,10 @@ class EPUBData:
         Attributes:
             file_name (str): path to the file with a book in epub format.
     """
-    def __init__(self, file_name):
+    def __init__(self, file_path):
         # Reading epub file
-        self.book = epub.read_epub(file_name)
+        self.file_path = file_path
+        self.book = epub.read_epub(self.file_path)
 
     def list_of_images(self):
         """
