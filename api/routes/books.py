@@ -1,20 +1,10 @@
-import ebooklib
 import os
-import uuid
-import xml.etree.ElementTree as ET
-import re
 
-
-from fastapi.responses import Response, PlainTextResponse, HTMLResponse
-import zipfile
-from pathlib import Path
-from urllib.parse import quote
-
-from fastapi import APIRouter, UploadFile, Query, HTTPException
-from ebooklib import epub
+from fastapi.responses import Response, HTMLResponse
+from fastapi import APIRouter, UploadFile, Query, HTTPException, File
 from api.services.epub import EPUBData
-from bs4 import BeautifulSoup
-
+from settings import settings
+from api.utils.books_navigation import add_navigation_buttons
 
 
 router = APIRouter(
@@ -23,183 +13,19 @@ router = APIRouter(
 )
 
 
-@router.get("/epub_book/")
-async def get_epub_book_data(file_name: str):
-    # print(epub_file.filename)
-    # book = epub.read_epub(f"books_test/{epub_file.filename}")
-    # print(book.get_metadata('DC', 'title'))
-    # print(book.get_metadata('DC', 'creator'))
-    # print(book.get_metadata('DC', 'identifier'))
-    # print(book.get_metadata('DC', 'description'))
-    # print(book.get_metadata('DC', 'coverage'))
-    # print(book.get_metadata('DC', 'publisher'))
-    # print(book.get_metadata('DC', 'contributor'))
-    # l = list()
-    # for item in book.get_items():
-    #     if item.get_type() == ebooklib.ITEM_DOCUMENT:
-    #         print('==================================')
-    #         print('NAME : ', item.get_name())
-    #         print('----------------------------------')
-    #         # print(item.get_content())
-    #         # print('==================================')
-    #         l.append((item.get_name(), item.get_content()))
-    # return {"book": l}
-    # print("m", book.metadata)
-    # print("spine", book.spine)
-    # print("toc", book.toc)
-
-    # for x in book.get_items_of_type(ebooklib.ITEM_IMAGE):
-    #     print("ITEM_IMAGE", x)
-    # SAVE_DIR = "test"
-    # for i, item in enumerate(book.get_items_of_type(ebooklib.ITEM_IMAGE)):
-    #     file_name = item.file_name.split("/")[-1] or f"image_{i}.jpg"
-    #     save_path = os.path.join(SAVE_DIR, file_name)
-    #
-    #     with open(save_path, "wb") as img_file:
-    #         img_file.write(item.get_content())
-    #
-    #     print(f"Saved image: {save_path}")
-    #
-    # for x in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
-    #     print("ITEM_DOCUMENT", x.content.decode("utf-8"))
-
-
-    book = EPUBData(file_path=file_name)
-    images = book.list_of_images()
-    docs = book.list_of_documents()
-    # content = list([(str(doc), soup(book.get_documents_content(doc), "lxml").get_text()) for doc in docs])
-    content = list([book.get_documents_content(doc) for doc in docs])
-
-    return Response(content=content[13], media_type="application/xhtml+xml")
-
-
-BOOKS_DIR = Path("books_stored")
-
-
-
-def get_container_xml(epub_path: str) -> str:
-    with zipfile.ZipFile(epub_path, 'r') as z:
-        if 'META-INF/container.xml' not in z.namelist():
-            raise FileNotFoundError("container.xml not found in EPUB")
-        return z.read('META-INF/container.xml').decode('utf-8')
-
-def get_opf_path(container_xml: str) -> str:
-    soup = BeautifulSoup(container_xml, 'xml')
-    rootfile = soup.find('rootfile')
-    if not rootfile or not rootfile.has_attr('full-path'):
-        raise ValueError("OPF path not found in container.xml")
-    return rootfile['full-path']
-
-def get_spine_order(epub_path: str, opf_path: str) -> list[str]:
-    with zipfile.ZipFile(epub_path, 'r') as z:
-        opf_content = z.read(opf_path).decode('utf-8')
-
-    soup = BeautifulSoup(opf_content, 'xml')
-
-    # Build manifest mapping (id → href)
-    manifest = {item['id']: os.path.join(os.path.dirname(opf_path), item['href'])
-                for item in soup.find_all('item')}
-    # Build ordered list via spine
-    order = [manifest[itemref['idref']] for itemref in soup.find_all('itemref')]
-    return order
-
-
-def rewrite_resource_urls(html_content: str, file_path: str, current_xhtml_path: str) -> str:
-    """
-    Rewrite resource URLs in XHTML content to point to the epub-resource endpoint.
-
-    Args:
-        html_content: The XHTML content
-        file_path: Path to the EPUB file
-        current_xhtml_path: Path of the current XHTML file within the EPUB
-    """
-    file_name = os.path.basename(file_path)
-
-    # Get the directory of the current XHTML file to resolve relative paths
-    current_dir = os.path.dirname(current_xhtml_path)
-
-    def resolve_path(match):
-        """Resolve relative paths and rewrite to endpoint URL."""
-        attr_name = match.group(1)  # 'href' or 'src'
-        original_path = match.group(2)  # the actual path
-        print("0", match.group(0),"1",  match.group(1), "2",  match.group(2))
-        # Skip external URLs and data URIs
-        if original_path.startswith(('http://', 'https://', 'data:', '//')):
-            return match.group(0)
-
-        # Resolve relative path
-        if current_dir and not original_path.startswith('/'):
-            # Combine current directory with relative path and normalize
-            resolved = os.path.normpath(os.path.join(current_dir, original_path))
-            # Convert Windows path separators to forward slashes
-            resolved = resolved.replace('\\', '/')
-        else:
-            resolved = original_path.lstrip('/')
-
-        # Create new URL pointing to our endpoint
-        # Use &amp; instead of & for XHTML compliance
-        new_url = f"/book/epub-resource?file_path={quote(file_path)}&amp;resource_path={quote(resolved)}"
-
-        return f'{attr_name}="{new_url}"'
-
-    # Rewrite href and src attributes
-    # Pattern captures: (href|src)=["'](path)["']
-    html_content = re.sub(
-        r'(href|src)=["\']((?!http://|https://|data:|//)[^"\']+)["\']',
-        resolve_path,
-        html_content
-    )
-
-    return html_content
-
-def read_epub_file(epub_path: str, internal_path: str) -> str:
-    with zipfile.ZipFile(epub_path, 'r') as z:
-        return z.read(internal_path)
-
-@router.get("/first-chapter", response_class=HTMLResponse)
-def get_first_chapter(file_path: str = Query(...)):
-
-    # 1) Copy file into books_test
-    file_name = os.path.basename(file_path)
-    saved_path = os.path.join(BOOKS_DIR, file_name)
-    with open(file_path, 'rb') as src, open(saved_path, 'wb') as dst:
-        dst.write(src.read())
-
-    # 2) Read container.xml
-    container_xml = get_container_xml(saved_path)
-
-    # 3) Get path to content.opf
-    opf_path = get_opf_path(container_xml)
-
-    # 4) Get ordered XHTML files
-    ordered_files = get_spine_order(saved_path, opf_path)
-
-    # 5) Read first file content
-    cur_file = ordered_files[4]
-    first_file_content = read_epub_file(saved_path, cur_file)
-    print(ordered_files)
-    # 6) Rewrite resource URLs to point to our endpoint
-    first_file_content_str = first_file_content.decode('utf-8') if isinstance(first_file_content,
-                                                                              bytes) else first_file_content
-    modified_content = rewrite_resource_urls(first_file_content_str, file_path, cur_file)
-
-    # print(saved_path, os.path.exists(saved_path), os.path.getsize(saved_path), ordered_files[3])
-
-    return Response(content=modified_content, media_type="application/xhtml+xml")
-
-
 # Endpoint to serve resources from EPUB
-@router.get("/epub-resource")
-def get_epub_resource(
+@router.get("/epub_resource")
+async def get_epub_resource(
         file_path: str = Query(...),
         resource_path: str = Query(...)
 ):
     """Serve a resource (CSS, image, etc.) from an EPUB file."""
     file_name = os.path.basename(file_path)
-    saved_path = os.path.join(BOOKS_DIR, file_name)
+    saved_path = os.path.join(settings.books_path, file_name)
 
     # Read the resource from the EPUB
-    resource_content = read_epub_file(saved_path, resource_path)
+    epub_service = EPUBData()
+    resource_content = await epub_service.read_epub_file(saved_path, resource_path)
 
     # Determine media type based on file extension
     ext = resource_path.lower().split('.')[-1]
@@ -218,3 +44,124 @@ def get_epub_resource(
     media_type = media_types.get(ext, 'application/octet-stream')
 
     return Response(content=resource_content, media_type=media_type)
+
+
+# 1) Upload and store book
+@router.post("/upload_book")
+async def upload_book(file: UploadFile = File(...)):
+    """Upload an EPUB file and store it in the books directory."""
+
+    # Validate file extension
+    if not file.filename.endswith('.epub'):
+        raise HTTPException(status_code=400, detail="Only EPUB files are allowed")
+
+    epub_service = EPUBData()
+    # Save file to books_stored directory
+    saved_path = await epub_service.upload_book(file)
+
+    return {
+        "message": "Book uploaded successfully",
+        "filename": file.filename,
+        "path": saved_path
+    }
+
+
+# 2) Get list of stored books
+@router.get("/stored_books")
+def get_stored_books():
+    """Return list of all books stored in the books directory."""
+    book_path = settings.books_path
+    if not os.path.exists(book_path):
+        return {"books": []}
+
+    epub_service = EPUBData()
+    # Get all .epub files in the directory
+    books = epub_service.get_books()
+
+    return {"books": books}
+
+
+@router.get("/chapter", response_class=HTMLResponse)
+async def get_chapter(
+        filename: str = Query(...),
+        chapter_index: int = Query(0, ge=0)
+):
+    """Return a specific chapter of a stored book by index with navigation buttons."""
+
+    # Get the saved path
+    saved_path = os.path.join(settings.books_path, filename)
+
+    # Check if file exists
+    if not os.path.exists(saved_path):
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    epub_service = EPUBData()
+    # Read container.xml
+    container_xml = await epub_service.read_epub_file(
+        epub_path=saved_path,
+        internal_path='META-INF/container.xml'
+    )
+    container_xml = container_xml.decode('utf-8')
+
+    # Get path to content.opf
+    opf_path = await epub_service.get_opf_path(container_xml)
+
+    # Get ordered XHTML files
+    ordered_files = await epub_service.get_spine_order(saved_path, opf_path)
+
+    # Validate chapter_index
+    if chapter_index >= len(ordered_files):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chapter index {chapter_index} out of range. Book has {len(ordered_files)} chapters."
+        )
+
+    # Read the requested chapter
+    cur_file = ordered_files[chapter_index]
+    chapter_content = await epub_service.read_epub_file(saved_path, cur_file)
+
+    # Rewrite resource URLs to point to our endpoint
+    chapter_content_str = chapter_content.decode('utf-8') if isinstance(
+        chapter_content, bytes
+    ) else chapter_content
+    modified_content = await epub_service.rewrite_resource_urls(chapter_content_str, saved_path, cur_file)
+
+    # Add navigation buttons
+    modified_content = add_navigation_buttons(
+        modified_content,
+        filename,
+        chapter_index,
+        len(ordered_files)
+    )
+
+    return Response(content=modified_content, media_type="application/xhtml+xml")
+
+
+# Optional: Add an endpoint to get total chapter count
+@router.get("/chapter_count")
+async def get_chapter_count(filename: str = Query(...)):
+    """Return the total number of chapters in a book."""
+
+    saved_path = os.path.join(settings.books_path, filename)
+
+    if not os.path.exists(saved_path):
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    epub_service = EPUBData()
+
+    # Read container.xml
+    container_xml = await epub_service.read_epub_file(
+        epub_path=saved_path,
+        internal_path='META-INF/container.xml'
+    )
+    container_xml = container_xml.decode('utf-8')
+    # Get path to content.opf
+    opf_path = await epub_service.get_opf_path(container_xml)
+    # Get ordered XHTML files
+    ordered_files = await epub_service.get_spine_order(saved_path, opf_path)
+
+    return {
+        "filename": filename,
+        "total_chapters": len(ordered_files),
+        "chapters": ordered_files  # Optional: return list of chapter file names
+    }

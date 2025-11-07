@@ -7,4 +7,5 @@ dependencies = [
     "beautifulsoup4>=4.14.2",
     "ebooklib>=0.19",
     "fastapi[standard]>=0.116.2",
+    "pydantic-settings>=2.11.0",
 ]

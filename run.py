@@ -1,21 +1,21 @@
 import os
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+from settings import settings
 
 from api.routes.books import router as book_router
 
 
-app = FastAPI()
+app = FastAPI(
+    title=settings.app_name
+)
 
-BOOKS_DIR = "books_stored"
-
-# Ensure books_test exists
-os.makedirs(BOOKS_DIR, exist_ok=True)
-# app.mount("/books", StaticFiles(directory=BOOKS_DIR), name="books")
 
 @app.get("/")
 async def index():
-    return {"message": "api v1"}
+    return {
+        "app_name": settings.app_name,
+        "api_prefix": settings.api_prefix
+    }
 
 
 app.include_router(book_router)
