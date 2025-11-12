@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # File upload settings
     # max_upload_size: int = 100 * 1024 * 1024  # 100MB
     chunk_size: int = 1024 * 1024  # 1MB
+    dict_base_url: str = "https://api.dictionaryapi.dev/api/v2/entries/en/" #just add a word
+    anthropic_api_key: str = ""
+    openai_api_key: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

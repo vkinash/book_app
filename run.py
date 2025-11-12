@@ -1,8 +1,8 @@
-import os
 from fastapi import FastAPI
 from settings import settings
 
 from api.routes.books import router as book_router
+from api.routes.words import router as word_router
 
 
 app = FastAPI(
@@ -19,3 +19,4 @@ async def index():
 
 
 app.include_router(book_router)
+app.include_router(word_router)

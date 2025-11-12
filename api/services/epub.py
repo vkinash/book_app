@@ -102,7 +102,6 @@ class EPUBData:
             """Resolve relative paths and rewrite to endpoint URL."""
             attr_name = match.group(1)  # 'href' or 'src'
             original_path = match.group(2)  # the actual path
-            print("0", match.group(0),"1",  match.group(1), "2",  match.group(2))
             # Skip external URLs and data URIs
             if original_path.startswith(('http://', 'https://', 'data:', '//')):
                 return match.group(0)
