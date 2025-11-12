@@ -1,5 +1,9 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
+from typing import Optional, Dict, Any
+from langchain_core.language_models import BaseLanguageModel
+from langchain_ollama import OllamaLLM
+
 
 class Settings(BaseSettings):
     # Application settings
@@ -27,6 +31,12 @@ class Settings(BaseSettings):
     # File upload settings
     # max_upload_size: int = 100 * 1024 * 1024  # 100MB
     chunk_size: int = 1024 * 1024  # 1MB
+
+    # LLM settings
+    default_llm_provider: str = "ollama"
+    default_llm_model: str = "gemma3:1b"
+    ollama_base_url: str = "http://localhost:11434"
+    llm_temperature: float = 0.7
 
     model_config = SettingsConfigDict(
         env_file=".env",
