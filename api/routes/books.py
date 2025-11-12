@@ -1,16 +1,21 @@
 import os
+from pathlib import Path
 
 from fastapi.responses import Response, HTMLResponse
 from fastapi import APIRouter, UploadFile, Query, HTTPException, File
 from api.services.epub import EPUBData
 from settings import settings
 from api.utils.books_navigation import add_navigation_buttons
+from core.rag_service import RAGService
 
 
 router = APIRouter(
     prefix="/book",
     tags=["books"]
 )
+
+# Create a single RAG service instance to reuse across endpoints
+rag_service = RAGService()
 
 
 # Endpoint to serve resources from EPUB
@@ -49,8 +54,10 @@ async def get_epub_resource(
 # 1) Upload and store book
 @router.post("/upload_book")
 async def upload_book(file: UploadFile = File(...)):
-    """Upload an EPUB file and store it in the books directory."""
-
+    """
+    Upload an EPUB file, store it, and process it for RAG.
+    Processing includes: extracting text, chunking, embedding, and storing in vector DB.
+    """
     # Validate file extension
     if not file.filename.endswith('.epub'):
         raise HTTPException(status_code=400, detail="Only EPUB files are allowed")
@@ -59,11 +66,27 @@ async def upload_book(file: UploadFile = File(...)):
     # Save file to books_stored directory
     saved_path = await epub_service.upload_book(file)
 
-    return {
-        "message": "Book uploaded successfully",
-        "filename": file.filename,
-        "path": saved_path
-    }
+    # TODO: Make processing optional
+    # Process the book for RAG
+    try:
+        processing_result = await rag_service.process_book(saved_path)
+        
+        return {
+            "message": "Book uploaded and processed successfully",
+            "filename": file.filename,
+            "path": saved_path,
+            "book_id": processing_result["book_id"],
+            "total_chunks": processing_result["total_chunks"]
+        }
+    except Exception as e:
+        # If processing fails, still return success for upload but warn about processing
+        return {
+            "message": "Book uploaded successfully but processing failed",
+            "filename": file.filename,
+            "path": saved_path,
+            "error": str(e),
+            "warning": "Book may not be available for Q&A until processed"
+        }
 
 
 # 2) Get list of stored books
@@ -165,3 +188,112 @@ async def get_chapter_count(filename: str = Query(...)):
         "total_chapters": len(ordered_files),
         "chapters": ordered_files  # Optional: return list of chapter file names
     }
+
+
+@router.post("/process_book")
+async def process_book(
+    filename: str = Query(..., description="EPUB filename to process for RAG")
+):
+    """
+    Process a book for RAG: extract text, chunk, embed, and store in vector DB.
+    Useful for processing existing uploaded books or reprocessing books.
+    
+    Args:
+        filename: EPUB filename to process (e.g., "book.epub")
+        
+    Returns:
+        Processing results with book_id and total_chunks
+        
+    Raises:
+        404: If book file is not found
+        500: If there's an error processing the book
+    """
+    # Check if file exists
+    saved_path = os.path.join(settings.books_path, filename)
+    
+    if not os.path.exists(saved_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Book '{filename}' not found. Make sure the book is uploaded first."
+        )
+    
+    # Process the book for RAG
+    try:
+        processing_result = await rag_service.process_book(saved_path)
+        
+        return {
+            "message": "Book processed successfully",
+            "filename": filename,
+            "book_id": processing_result["book_id"],
+            "total_chunks": processing_result["total_chunks"]
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing book: {str(e)}"
+        )
+
+
+@router.post("/ask")
+async def ask_question(
+    book_id: str = Query(..., description="Book ID (filename without .epub extension)"),
+    question: str = Query(..., description="Question to ask about the book")
+):
+    """
+    Ask a question about a book using RAG.
+    
+    Args:
+        book_id: Book identifier (filename without .epub extension)
+        question: Question to ask
+        
+    Returns:
+        Answer to the question
+        
+    Raises:
+        404: If book is not found or not processed
+        500: If there's an error processing the question
+    """
+    # Check if book file exists
+    epub_service = EPUBData()
+    books = epub_service.get_books()
+    
+    # Find book by ID (check if any book filename matches)
+    book_file = None
+    for book in books:
+        # book_id is the stem (filename without extension)
+        if Path(book["filename"]).stem == book_id:
+            book_file = book
+            break
+    
+    if not book_file:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Book with ID '{book_id}' not found. Make sure the book is uploaded."
+        )
+    
+    # Answer the question
+    try:
+        answer = await rag_service.answer_question(
+            question=question,
+            book_id=book_id
+        )
+        
+        # Check if we got an answer (empty context might return empty answer)
+        if not answer or len(answer.strip()) == 0:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Book '{book_id}' may not be processed yet. Please re-upload the book to process it."
+            )
+        
+        return {
+            "book_id": book_id,
+            "question": question,
+            "answer": answer
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error answering question: {str(e)}"
+        )
