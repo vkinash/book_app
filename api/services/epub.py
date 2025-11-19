@@ -131,3 +131,46 @@ class EPUBData:
         )
 
         return html_content
+
+    async def extract_text_from_book(self, epub_path: str) -> str:
+        """
+        Extract all text content from an EPUB file.
+        
+        Args:
+            epub_path: Path to the EPUB file
+            
+        Returns:
+            Plain text content of the book
+        """
+        # Read container.xml
+        container_xml = await self.read_epub_file(
+            epub_path=epub_path,
+            internal_path='META-INF/container.xml'
+        )
+        container_xml = container_xml.decode('utf-8')
+        
+        # Get path to content.opf
+        opf_path = await self.get_opf_path(container_xml)
+        
+        # Get ordered XHTML files (chapters)
+        ordered_files = await self.get_spine_order(epub_path, opf_path)
+        
+        # Extract text from each chapter
+        all_text = []
+        for chapter_path in ordered_files:
+            chapter_content = await self.read_epub_file(epub_path, chapter_path)
+            chapter_str = chapter_content.decode('utf-8') if isinstance(
+                chapter_content, bytes
+            ) else chapter_content
+            
+            # Parse HTML and extract text
+            soup = BeautifulSoup(chapter_str, 'html.parser')
+            # Remove script and style elements
+            for script in soup(["script", "style"]):
+                script.decompose()
+            
+            # Get text
+            text = soup.get_text(separator='\n', strip=True)
+            all_text.append(text)
+        
+        return '\n\n'.join(all_text)
