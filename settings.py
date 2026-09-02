@@ -1,8 +1,6 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
-from typing import Optional, Dict, Any
-from langchain_core.language_models import BaseLanguageModel
-from langchain_ollama import OllamaLLM
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -17,19 +15,13 @@ class Settings(BaseSettings):
     # Directory settings
     books_dir: str = "./books_stored"
 
-    # Database settings (example)
-    # database_url: Optional[str] = None
+    # Database settings
+    database_url: str = "sqlite+aiosqlite:///./book_app.db"
 
     # API settings
     api_prefix: str = "/api/v1"
 
-    # Security settings (example)
-    # secret_key: str = "your-secret-key-change-in-production"
-    # algorithm: str = "HS256"
-    # access_token_expire_minutes: int = 30
-
     # File upload settings
-    # max_upload_size: int = 100 * 1024 * 1024  # 100MB
     chunk_size: int = 1024 * 1024  # 1MB
 
     # LLM settings
@@ -42,16 +34,15 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        extra="ignore"
+        extra="ignore",
     )
 
     @property
     def books_path(self) -> Path:
-        """Get books directory as Path object"""
+        """Get books directory as Path object."""
         path = Path(self.books_dir)
-        path.mkdir(parents=True, exist_ok=True)  # Create if doesn't exist
+        path.mkdir(parents=True, exist_ok=True)
         return path
 
 
-# Create a singleton instance
 settings = Settings()

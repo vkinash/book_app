@@ -208,3 +208,10 @@ __marimo__/
 
 # Vector store
 chroma_db/
+
+# SQLite database
+*.db
+book_app.db
+
+PLAN.md
+TASK_PLAN.md
