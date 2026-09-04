@@ -1,4 +1,4 @@
-.PHONY: run dev install install-dev format lint clean help
+.PHONY: run dev install install-dev format lint clean test test-smoke help
 
 # Default target
 .DEFAULT_GOAL := help
@@ -44,9 +44,8 @@ clean: ## Clean up temporary files and caches
 	find . -type d -name "*.egg-info" -exec rm -r {} + 2>/dev/null || true
 	rm -rf .pytest_cache .mypy_cache .ruff_cache
 
-test: ## Run tests (if pytest is installed)
-	@if command -v pytest > /dev/null; then \
-		uv run pytest; \
-	else \
-		echo "pytest not found, install it with: uv add --dev pytest"; \
-	fi
+test: ## Run unit tests (mocked RAG, no Ollama)
+	uv run pytest tests -v -m "not smoke"
+
+test-smoke: ## Run live Ollama + Chroma smoke tests
+	uv run pytest tests -v -m smoke

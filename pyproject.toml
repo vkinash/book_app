@@ -20,5 +20,17 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.25",
     "ruff>=0.14.4",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+markers = [
+    "smoke: live Ollama + Chroma (opt-in; not run by make test)",
 ]
