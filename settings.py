@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Database settings
     database_url: str = "sqlite+aiosqlite:///./book_app.db"
 
+    # Dev user (placeholder until Task 2 auth)
+    dev_user_email: str = "dev@local.app"
+
     # API settings
     api_prefix: str = "/api/v1"
 

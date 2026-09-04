@@ -1,5 +1,4 @@
 from typing import List, Optional, Dict, Any
-from pathlib import Path
 from langchain_core.documents import Document
 from api.services.epub import EPUBData
 from core.text_processor import TextProcessor
@@ -36,34 +35,29 @@ class RAGService:
         self.vector_store = VectorStore()
         self.vector_store.set_embedding_function(self.embedding_service.embeddings)
     
-    async def process_book(self, epub_path: str) -> Dict[str, Any]:
+    async def process_book(self, epub_path: str, book_id: str) -> Dict[str, Any]:
         """
         Process a book: extract text, chunk, embed, and store in vector DB.
-        
+
         Args:
             epub_path: Path to EPUB file
-            
+            book_id: Book identifier (DB UUID string)
+
         Returns:
             Dictionary with processing results
         """
-        # Extract text
         text = await self.epub_service.extract_text_from_book(epub_path)
-        
-        # Get book identifier
-        book_id = Path(epub_path).stem
-        
-        # Chunk text
+
         documents = self.text_processor.chunk_text(
             text,
             metadata={"book_id": book_id, "source": epub_path}
         )
-        
-        # Add to vector store
+
         doc_ids = self.vector_store.add_documents(
             documents,
             book_id=book_id
         )
-        
+
         return {
             "book_id": book_id,
             "total_chunks": len(documents),

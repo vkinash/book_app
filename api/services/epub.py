@@ -1,6 +1,7 @@
 import os
 import zipfile
 import re
+from pathlib import Path
 
 from settings import settings
 from fastapi import UploadFile
@@ -20,19 +21,20 @@ class EPUBData:
         # Reading epub file
         self.books_storage = settings.books_path
 
-    async def upload_book(self, file: UploadFile) -> str:
+    async def upload_book(self, file: UploadFile, destination_path: Path) -> str:
         """
-        Upload book into books_stored directory
+        Save uploaded EPUB to the given path.
         :param file: file as UploadFile obj
-        :return: path to file ib books_storage
+        :param destination_path: full path where the file should be written
+        :return: path to saved file
         """
-        saved_path = os.path.join(self.books_storage, file.filename)
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(saved_path, 'wb') as dst:
+        with open(destination_path, 'wb') as dst:
             while chunk := await file.read(settings.chunk_size):
                 dst.write(chunk)
 
-        return saved_path
+        return str(destination_path)
 
     def get_books(self) -> list:
         """
@@ -76,6 +78,27 @@ class EPUBData:
         order = [manifest[itemref['idref']] for itemref in soup.find_all('itemref')]
         return order
 
+    async def extract_metadata(self, epub_path: str) -> dict[str, str | None]:
+        """Extract title and author from EPUB OPF metadata."""
+        container_xml = await self.read_epub_file(
+            epub_path=epub_path,
+            internal_path='META-INF/container.xml',
+        )
+        container_xml = container_xml.decode('utf-8')
+        opf_path = await self.get_opf_path(container_xml)
+
+        opf_content = await self.read_epub_file(epub_path=epub_path, internal_path=opf_path)
+        opf_content = opf_content.decode('utf-8')
+        soup = BeautifulSoup(opf_content, 'xml')
+
+        title_tag = soup.find('dc:title') or soup.find('title')
+        creator_tags = soup.find_all('dc:creator') or soup.find_all('creator')
+
+        title = title_tag.get_text(strip=True) if title_tag else None
+        author = creator_tags[0].get_text(strip=True) if creator_tags else None
+
+        return {"title": title, "author": author}
+
     @staticmethod
     async def read_epub_file(epub_path: str, internal_path: str) -> str:
         with zipfile.ZipFile(epub_path, 'r') as z:
@@ -84,7 +107,12 @@ class EPUBData:
             return z.read(internal_path)
 
     @staticmethod
-    async def rewrite_resource_urls(html_content: str, file_path: str, current_xhtml_path: str) -> str:
+    async def rewrite_resource_urls(
+        html_content: str,
+        file_path: str,
+        current_xhtml_path: str,
+        book_id: str | None = None,
+    ) -> str:
         """
         Rewrite resource URLs in XHTML content to point to the epub-resource endpoint.
 
@@ -92,33 +120,33 @@ class EPUBData:
             html_content: The XHTML content
             file_path: Path to the EPUB file
             current_xhtml_path: Path of the current XHTML file within the EPUB
+            book_id: Optional DB book UUID for new uploads
         """
-        file_name = os.path.basename(file_path)
-
-        # Get the directory of the current XHTML file to resolve relative paths
         current_dir = os.path.dirname(current_xhtml_path)
 
         def resolve_path(match):
             """Resolve relative paths and rewrite to endpoint URL."""
-            attr_name = match.group(1)  # 'href' or 'src'
-            original_path = match.group(2)  # the actual path
-            print("0", match.group(0),"1",  match.group(1), "2",  match.group(2))
-            # Skip external URLs and data URIs
+            attr_name = match.group(1)
+            original_path = match.group(2)
             if original_path.startswith(('http://', 'https://', 'data:', '//')):
                 return match.group(0)
 
-            # Resolve relative path
             if current_dir and not original_path.startswith('/'):
-                # Combine current directory with relative path and normalize
                 resolved = os.path.normpath(os.path.join(current_dir, original_path))
-                # Convert Windows path separators to forward slashes
                 resolved = resolved.replace('\\', '/')
             else:
                 resolved = original_path.lstrip('/')
 
-            # Create new URL pointing to our endpoint
-            # Use &amp; instead of & for XHTML compliance
-            new_url = f"/book/epub_resource?file_path={quote(file_path)}&amp;resource_path={quote(resolved)}"
+            if book_id:
+                new_url = (
+                    f"/book/epub_resource?book_id={quote(book_id)}"
+                    f"&amp;resource_path={quote(resolved)}"
+                )
+            else:
+                new_url = (
+                    f"/book/epub_resource?file_path={quote(file_path)}"
+                    f"&amp;resource_path={quote(resolved)}"
+                )
 
             return f'{attr_name}="{new_url}"'
 

@@ -3,15 +3,17 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from api.routes.books import router as book_router
-from db.session import dispose_engine, engine
+from api.services.dev_user import get_or_create_dev_user
+from db.session import async_session_maker, dispose_engine, engine
 from settings import settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Verify database connectivity on startup
     async with engine.connect():
         pass
+    async with async_session_maker() as session:
+        await get_or_create_dev_user(session)
     yield
     await dispose_engine()
 
