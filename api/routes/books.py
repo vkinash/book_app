@@ -1,6 +1,5 @@
 import os
 import uuid
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, Response
@@ -12,16 +11,20 @@ from api.services.book_service import book_file_path, create_book, get_book, lis
 from api.services.epub import EPUBData
 from api.utils.books_navigation import add_navigation_buttons
 from core.rag_service import RAGService
+from db.models.book import Book
 from db.models.user import User
 from db.session import get_async_session
 from settings import settings
+
 
 router = APIRouter(
     prefix="/book",
     tags=["books"],
 )
 
+
 rag_service = RAGService()
+
 
 MEDIA_TYPES = {
     'css': 'text/css',
@@ -46,10 +49,10 @@ async def _resolve_book_path(
     session: AsyncSession,
     user: User,
     book_id: uuid.UUID
-) -> tuple[str, str | None, str | None]:
+) -> tuple[str, Book]:
     """
-    Resolve EPUB file path and navigation keys.
-    Returns (saved_path, nav_filename, nav_book_id).
+    Resolve EPUB file path for a book owned by the user.
+    Returns (saved_path, book).
     """
     book = await get_book(session, book_id, user.id)
     if book is None:
@@ -57,7 +60,7 @@ async def _resolve_book_path(
     saved_path = str(book_file_path(book))
     if not os.path.exists(saved_path):
         raise HTTPException(status_code=404, detail="Book file not found on disk")
-    return saved_path, None, str(book.id)
+    return saved_path, book
 
 
 @router.get("/epub_resource")
@@ -68,10 +71,13 @@ async def get_epub_resource(
     user: User = Depends(get_dev_user),
 ):
     """Serve a resource (CSS, image, etc.) from an EPUB file."""
-    saved_path, _, _ = await _resolve_book_path(session, user, book_id, None)
+    saved_path, _ = await _resolve_book_path(session, user, book_id)
 
     epub_service = EPUBData()
-    resource_content = await epub_service.read_epub_file(saved_path, resource_path)
+    try:
+        resource_content = await epub_service.read_epub_file(saved_path, resource_path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     return Response(content=resource_content, media_type=_media_type_for(resource_path))
 
 
@@ -154,44 +160,47 @@ async def get_chapter(
     user: User = Depends(get_dev_user),
 ):
     """Return a chapter of a stored book with navigation buttons."""
-    saved_path, nav_filename, nav_book_id = await _resolve_book_path(
+    saved_path, book = await _resolve_book_path(
         session, user, book_id
     )
+    book_id_str = str(book.id)
 
     epub_service = EPUBData()
-    container_xml = await epub_service.read_epub_file(
-        epub_path=saved_path,
-        internal_path='META-INF/container.xml',
-    )
-    container_xml = container_xml.decode('utf-8')
-    opf_path = await epub_service.get_opf_path(container_xml)
-    ordered_files = await epub_service.get_spine_order(saved_path, opf_path)
-
-    if chapter_index >= len(ordered_files):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Chapter index {chapter_index} out of range. Book has {len(ordered_files)} chapters.",
+    try:
+        container_xml = await epub_service.read_epub_file(
+            epub_path=saved_path,
+            internal_path='META-INF/container.xml',
         )
+        container_xml = container_xml.decode('utf-8')
+        opf_path = await epub_service.get_opf_path(container_xml)
+        ordered_files = await epub_service.get_spine_order(saved_path, opf_path)
 
-    cur_file = ordered_files[chapter_index]
-    chapter_content = await epub_service.read_epub_file(saved_path, cur_file)
-    chapter_content_str = (
-        chapter_content.decode('utf-8')
-        if isinstance(chapter_content, bytes)
-        else chapter_content
-    )
-    modified_content = await epub_service.rewrite_resource_urls(
-        chapter_content_str,
-        saved_path,
-        cur_file,
-        book_id=nav_book_id,
-    )
+        if chapter_index >= len(ordered_files):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Chapter index {chapter_index} out of range. Book has {len(ordered_files)} chapters.",
+            )
+
+        cur_file = ordered_files[chapter_index]
+        chapter_content = await epub_service.read_epub_file(saved_path, cur_file)
+        chapter_content_str = (
+            chapter_content.decode('utf-8')
+            if isinstance(chapter_content, bytes)
+            else chapter_content
+        )
+        modified_content = await epub_service.rewrite_resource_urls(
+            chapter_content_str,
+            cur_file,
+            book_id=book_id_str,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     modified_content = add_navigation_buttons(
         modified_content,
-        nav_filename or "",
         chapter_index,
         len(ordered_files),
-        book_id=nav_book_id,
+        book_id=book_id_str,
+        book_name=book.title or book.filename,
     )
 
     return Response(content=modified_content, media_type="application/xhtml+xml")
@@ -204,7 +213,7 @@ async def get_chapter_count(
     user: User = Depends(get_dev_user),
 ):
     """Return the total number of chapters in a book."""
-    saved_path, nav_filename, nav_book_id = await _resolve_book_path(
+    saved_path, book = await _resolve_book_path(
         session, user, book_id
     )
 
@@ -218,8 +227,7 @@ async def get_chapter_count(
     ordered_files = await epub_service.get_spine_order(saved_path, opf_path)
 
     return {
-        "filename": nav_filename,
-        "book_id": nav_book_id,
+        "book_id": str(book.id),
         "total_chapters": len(ordered_files),
         "chapters": ordered_files,
     }
@@ -232,16 +240,14 @@ async def process_book(
     user: User = Depends(get_dev_user),
 ):
     """Process a book for RAG."""
-    saved_path, nav_filename, nav_book_id = await _resolve_book_path(
+    saved_path, book = await _resolve_book_path(
         session, user, book_id
     )
-    rag_book_id = nav_book_id or Path(saved_path).stem
 
     try:
-        processing_result = await rag_service.process_book(saved_path, book_id=rag_book_id)
+        processing_result = await rag_service.process_book(saved_path, book_id=str(book.id))
         return {
             "message": "Book processed successfully",
-            "filename": nav_filename,
             "book_id": processing_result["book_id"],
             "total_chunks": processing_result["total_chunks"],
         }
@@ -252,36 +258,19 @@ async def process_book(
 @router.post("/ask")
 async def ask_question(
     question: str = Query(..., description="Question to ask about the book"),
-    book_id: str = Query(..., description="DB UUID"),
+    book_id: uuid.UUID = Query(..., description="DB UUID"),
     session: AsyncSession = Depends(get_async_session),
     user: User = Depends(get_dev_user),
 ):
     """Ask a question about a book using RAG."""
-    rag_book_id = book_id
+    rag_book_id = str(book_id)
 
-    try:
-        parsed_id = uuid.UUID(book_id)
-        book = await get_book(session, parsed_id, user.id)
-        if book is not None:
-            rag_book_id = str(book.id)
-        else:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Book with ID '{book_id}' not found. Make sure the book is uploaded.",
-            )
-    except ValueError:
-        epub_service = EPUBData()
-        books = epub_service.get_books()
-        book_file = None
-        for book_entry in books:
-            if Path(book_entry["filename"]).stem == book_id:
-                book_file = book_entry
-                break
-        if not book_file:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Book with ID '{book_id}' not found. Make sure the book is uploaded.",
-            )
+    book = await get_book(session, book_id, user.id)
+    if book is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Book with ID '{book_id}' not found. Make sure the book is uploaded.",
+        )
 
     try:
         answer = await rag_service.answer_question(question=question, book_id=rag_book_id)

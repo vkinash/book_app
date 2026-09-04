@@ -4,18 +4,11 @@
 
 The Book Reader API serves EPUB files, tracks book metadata in the database, and provides RAG-based Q&A. All book routes live under the `/book` prefix.
 
+Books are identified by `book_id` (UUID). Metadata lives in the `books` table; the EPUB file is stored at `books_stored/{uuid}.epub`. `filename` in responses is the original upload name, not a lookup key.
+
 **Base URL (local):** `http://localhost:8001`
 
 **Auth:** Not implemented yet. All new uploads are owned by a default dev user (`dev@local.app`). Task 2 will add JWT authentication.
-
-## Legacy vs DB books
-
-| Type | How to identify | Storage |
-|------|-----------------|---------|
-| **DB book** (new uploads) | `book_id` (UUID) | Metadata in `books` table; file at `books_stored/{uuid}.epub` |
-| **Legacy book** (pre-existing files) | `filename` (original name in `books_stored/`) | Filesystem only — not in DB |
-
-New uploads appear in `GET /book/stored_books`. Legacy files still work via `filename` on read endpoints but do not appear in the DB list.
 
 ---
 
@@ -76,26 +69,22 @@ List books from the database for the dev user.
 }
 ```
 
-Legacy filesystem-only files are not included.
-
 ---
 
 ## GET /book/chapter
 
-Return one chapter as XHTML with navigation buttons.
+Return one chapter as XHTML with navigation buttons. The nav bar shows the book title (or original filename if title is missing).
 
 **Query params:**
 
 | Param | Required | Description |
 |-------|----------|-------------|
-| `book_id` | One of `book_id` or `filename` | DB book UUID |
-| `filename` | One of `book_id` or `filename` | Legacy filename in `books_stored/` |
+| `book_id` | Yes | DB book UUID |
 | `chapter_index` | No (default `0`) | Zero-based chapter index |
 
-**Examples:**
+**Example:**
 ```
 /book/chapter?book_id=550e8400-e29b-41d4-a716-446655440000&chapter_index=0
-/book/chapter?filename=Good_Omens.epub&chapter_index=0
 ```
 
 ---
@@ -104,19 +93,20 @@ Return one chapter as XHTML with navigation buttons.
 
 Return chapter count and spine file list.
 
-**Query params:** Same as `/book/chapter` (`book_id` or `filename`)
+**Query params:**
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `book_id` | Yes | DB book UUID |
 
 **Response:**
 ```json
 {
-  "filename": "Good_Omens.epub",
-  "book_id": null,
+  "book_id": "550e8400-e29b-41d4-a716-446655440000",
   "total_chapters": 24,
   "chapters": ["OEBPS/ch01.xhtml", "..."]
 }
 ```
-
-For DB books, `book_id` is set and `filename` is null.
 
 ---
 
@@ -129,8 +119,7 @@ Serve internal EPUB resources (CSS, images, fonts).
 | Param | Required | Description |
 |-------|----------|-------------|
 | `resource_path` | Yes | Path inside the EPUB zip |
-| `book_id` | One of `book_id` or `file_path` | DB book UUID |
-| `file_path` | One of `book_id` or `file_path` | Legacy full or basename file path |
+| `book_id` | Yes | DB book UUID |
 
 ---
 
@@ -142,14 +131,12 @@ Re-run RAG indexing for a book.
 
 | Param | Required | Description |
 |-------|----------|-------------|
-| `book_id` | One of `book_id` or `filename` | DB book UUID |
-| `filename` | One of `book_id` or `filename` | Legacy filename |
+| `book_id` | Yes | DB book UUID |
 
 **Response:**
 ```json
 {
   "message": "Book processed successfully",
-  "filename": null,
   "book_id": "550e8400-e29b-41d4-a716-446655440000",
   "total_chunks": 142
 }
@@ -165,13 +152,12 @@ Ask a question about a book using RAG.
 
 | Param | Required | Description |
 |-------|----------|-------------|
-| `book_id` | Yes | DB UUID **or** legacy filename without `.epub` |
+| `book_id` | Yes | DB book UUID |
 | `question` | Yes | Question text |
 
-**Examples:**
+**Example:**
 ```
 /book/ask?book_id=550e8400-e29b-41d4-a716-446655440000&question=Who%20is%20Crowley
-/book/ask?book_id=Good_Omens_-_Neil_Gaiman&question=Who%20is%20Crowley
 ```
 
 **Response:**
@@ -185,7 +171,7 @@ Ask a question about a book using RAG.
 
 ---
 
-## Example flow (new upload)
+## Example flow
 
 1. **Upload:** `POST /book/upload_book` with EPUB file → get `id`
 2. **List:** `GET /book/stored_books` → confirm book appears

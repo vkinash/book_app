@@ -36,22 +36,6 @@ class EPUBData:
 
         return str(destination_path)
 
-    def get_books(self) -> list:
-        """
-        Get list of files in the books_stored directory
-        :return: list of files
-        """
-        books = [
-            {
-                "filename": f,
-                "size": os.path.getsize(os.path.join(self.books_storage, f)),
-                "path": os.path.join(self.books_storage, f)
-            }
-            for f in os.listdir(self.books_storage)
-            if f.endswith('.epub')
-        ]
-        return books
-
     @staticmethod
     async def get_opf_path(container_xml: str) -> str:
         """
@@ -109,18 +93,16 @@ class EPUBData:
     @staticmethod
     async def rewrite_resource_urls(
         html_content: str,
-        file_path: str,
         current_xhtml_path: str,
-        book_id: str | None = None,
+        book_id: str,
     ) -> str:
         """
         Rewrite resource URLs in XHTML content to point to the epub-resource endpoint.
 
         Args:
             html_content: The XHTML content
-            file_path: Path to the EPUB file
             current_xhtml_path: Path of the current XHTML file within the EPUB
-            book_id: Optional DB book UUID for new uploads
+            book_id: DB book UUID
         """
         current_dir = os.path.dirname(current_xhtml_path)
 
@@ -137,16 +119,10 @@ class EPUBData:
             else:
                 resolved = original_path.lstrip('/')
 
-            if book_id:
-                new_url = (
-                    f"/book/epub_resource?book_id={quote(book_id)}"
-                    f"&amp;resource_path={quote(resolved)}"
-                )
-            else:
-                new_url = (
-                    f"/book/epub_resource?file_path={quote(file_path)}"
-                    f"&amp;resource_path={quote(resolved)}"
-                )
+            new_url = (
+                f"/book/epub_resource?book_id={quote(book_id)}"
+                f"&amp;resource_path={quote(resolved)}"
+            )
 
             return f'{attr_name}="{new_url}"'
 
