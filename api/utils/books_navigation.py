@@ -1,9 +1,16 @@
+import html
 import re
 
 from urllib.parse import quote
 
 
-def add_navigation_buttons(html_content: str, filename: str, current_index: int, total_chapters: int) -> str:
+def add_navigation_buttons(
+    html_content: str,
+    current_index: int,
+    total_chapters: int,
+    book_id: str,
+    book_name: str,
+) -> str:
     """Add Previous and Next navigation buttons to the top and bottom of the chapter."""
 
     # Determine if prev/next buttons should be enabled
@@ -48,10 +55,14 @@ def add_navigation_buttons(html_content: str, filename: str, current_index: int,
         }
     </style>
     """
-
-    prev_url = f"/book/chapter?filename={quote(filename)}&amp;chapter_index={current_index - 1}" if has_prev else "#"
-    next_url = f"/book/chapter?filename={quote(filename)}&amp;chapter_index={current_index + 1}" if has_next else "#"
-
+    prev_url = (
+        f"/book/chapter?book_id={quote(book_id)}&amp;chapter_index={current_index - 1}"
+        if has_prev else "#"
+    )
+    next_url = (
+        f"/book/chapter?book_id={quote(book_id)}&amp;chapter_index={current_index + 1}"
+        if has_next else "#"
+    )
     # XHTML requires disabled="disabled" instead of just disabled
     prev_disabled = '' if has_prev else ' disabled="disabled"'
     next_disabled = '' if has_next else ' disabled="disabled"'
@@ -61,7 +72,7 @@ def add_navigation_buttons(html_content: str, filename: str, current_index: int,
         <button onclick="window.location.href='{prev_url}'"{prev_disabled}>
             ← Previous
         </button>
-        <span class="chapter-info">Chapter {current_index + 1} of {total_chapters}</span>
+        <span class="chapter-info">{html.escape(book_name)} — Chapter {current_index + 1} of {total_chapters}</span>
         <button onclick="window.location.href='{next_url}'"{next_disabled}>
             Next →
         </button>
