@@ -11,8 +11,10 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import db.models  # noqa: F401 — register tables on Base.metadata
+from db.models.user import User
 from api.routes.books import router
 from api.services.dev_user import get_or_create_dev_user
+from api.services.auth import current_active_user
 from db.base import Base
 from db.session import get_async_session
 from settings import settings
@@ -101,9 +103,14 @@ async def app(books_dir: Path, session_maker) -> FastAPI:
         async with session_maker() as session:
             yield session
 
+    async def override_current_user() -> User:
+        async with session_maker() as session:
+            return await get_or_create_dev_user(session)
+
     application = FastAPI()
     application.include_router(router)
-    application.dependency_overrides[get_async_session] = override_session
+    application.dependency_overrides[current_active_user] = override_current_user
+
     return application
 
 

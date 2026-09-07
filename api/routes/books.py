@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, Response
 from ollama import ResponseError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import get_dev_user
+from api.services.auth import current_active_user
 from api.services.book_service import book_file_path, create_book, get_book, list_books
 from api.services.epub import EPUBData
 from api.utils.books_navigation import add_navigation_buttons
@@ -68,7 +68,7 @@ async def get_epub_resource(
     resource_path: str = Query(...),
     book_id: uuid.UUID = Query(...),
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_dev_user),
+    user: User = Depends(current_active_user),
 ):
     """Serve a resource (CSS, image, etc.) from an EPUB file."""
     saved_path, _ = await _resolve_book_path(session, user, book_id)
@@ -85,7 +85,7 @@ async def get_epub_resource(
 async def upload_book(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_dev_user),
+    user: User = Depends(current_active_user),
 ):
     """Upload an EPUB, store metadata in DB, and process for RAG."""
     if not file.filename or not file.filename.endswith('.epub'):
@@ -133,7 +133,7 @@ async def upload_book(
 @router.get("/stored_books")
 async def get_stored_books(
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_dev_user),
+    user: User = Depends(current_active_user),
 ):
     """Return books from the database for the current dev user."""
     books = await list_books(session, user.id)
@@ -157,7 +157,7 @@ async def get_chapter(
     chapter_index: int = Query(0, ge=0),
     book_id: uuid.UUID = Query(...),
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_dev_user),
+    user: User = Depends(current_active_user),
 ):
     """Return a chapter of a stored book with navigation buttons."""
     saved_path, book = await _resolve_book_path(
@@ -210,7 +210,7 @@ async def get_chapter(
 async def get_chapter_count(
     book_id: uuid.UUID = Query(...),
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_dev_user),
+    user: User = Depends(current_active_user),
 ):
     """Return the total number of chapters in a book."""
     saved_path, book = await _resolve_book_path(
@@ -237,7 +237,7 @@ async def get_chapter_count(
 async def process_book(
     book_id: uuid.UUID = Query(...),
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_dev_user),
+    user: User = Depends(current_active_user),
 ):
     """Process a book for RAG."""
     saved_path, book = await _resolve_book_path(
@@ -260,7 +260,7 @@ async def ask_question(
     question: str = Query(..., description="Question to ask about the book"),
     book_id: uuid.UUID = Query(..., description="DB UUID"),
     session: AsyncSession = Depends(get_async_session),
-    user: User = Depends(get_dev_user),
+    user: User = Depends(current_active_user),
 ):
     """Ask a question about a book using RAG."""
     rag_book_id = str(book_id)
